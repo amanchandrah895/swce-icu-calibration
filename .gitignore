@@ -1,0 +1,12 @@
+# Keep repository focused on final reproducible assets only
+extras/
+
+# Exclude manuscript/latex bundle
+final/latex/
+
+# Exclude consolidated pipeline notebook (per publish scope)
+final/notebooks/final_pipeline.ipynb
+
+# Common local artifacts
+.DS_Store
+**/.ipynb_checkpoints/
