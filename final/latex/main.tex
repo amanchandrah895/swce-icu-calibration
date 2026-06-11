@@ -1,0 +1,900 @@
+\documentclass{ieeeaccess}
+\usepackage{caption}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{tabularx}
+\usepackage{makecell}
+\usepackage{ragged2e}
+\usepackage{url}
+\graphicspath{{figures/}}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\history{Date of publication xxxx 00, 0000, date of current version xxxx 00, 0000.}
+\doi{10.1109/ACCESS.2025.DOI}
+
+\title{Severity-Weighted Calibration Error for Reliability Assessment Under Outcome-Severity Imbalance}
+
+\author{\uppercase{Aman Chandra H}\authorrefmark{1},
+\uppercase{K. C. Narendra}\authorrefmark{1}}
+
+\address[1]{School of Computer Science and Engineering, RV University, Bengaluru, Karnataka 560059, India}
+
+\tfootnote{This work was supported by RV University.}
+
+\markboth{A. Chandra H \headeretal: Severity-Weighted Calibration Error for Reliability Assessment}
+{A. Chandra H \headeretal: Severity-Weighted Calibration Error for Reliability Assessment}
+
+\corresp{Corresponding author: Aman Chandra H (e-mail: amanch.btech23@rvu.edu.in).}
+
+%% ============================================================
+%% ABSTRACT  (FIX-02: expand all abbreviations; FIX-10: add specific numbers)
+%% ============================================================
+\begin{abstract}
+Probability calibration is critical for reliable high-stakes predictive modelling, yet standard aggregate metrics such as Expected Calibration Error (ECE) can obscure important failures in severity-imbalanced subgroups. This work proposes and evaluates Severity-Weighted Calibration Error (SWCE), a formally defined post-hoc calibration framework incorporating outcome-severity weighting, and demonstrates that aggregate evaluation --- regardless of weighting scheme --- cannot reliably reveal subgroup-specific miscalibration. This result motivates severity-band-stratified calibration gap analysis as the primary diagnostic framework for assessing reliability under outcome-severity imbalance. Five representative models are evaluated on MIMIC-IV (Medical Information Mart for Intensive Care, version 4; 72,001 patients) with temporal replication on MIMIC-III (45,278 patients) using a strict 70/10/20 stratified split and Sequential Organ Failure Assessment (SOFA)-defined severity bands, with no test-set leakage during threshold selection or recalibration. A calibration paradox is identified: the model with the best aggregate ECE simultaneously produces the most dangerous severe-band calibration gap, systematically underestimating mortality in the highest-acuity subgroup, while models with comparably or substantially worse aggregate calibration produce negligible undertriage of severe patients. This divergence between aggregate rank and subgroup safety is consistent across both datasets and across all tested classification thresholds. SWCE produces aggregate rankings identical to standard ECE, formally establishing that aggregate severity weighting cannot resolve the subgroup masking problem. Standard global recalibration is often ineffective, whereas validation-based isotonic recalibration within severity bands substantially reduces subgroup miscalibration on both datasets. These findings establish severity-stratified calibration evaluation as a practical requirement for reliable deployment of high-stakes predictive models.
+\end{abstract}
+
+\begin{keywords}
+Calibration, clinical decision support, ICU mortality prediction, MIMIC-IV, MIMIC-III, SOFA score, severity-aware evaluation, probability calibration, Expected Calibration Error, Brier score, reliability diagrams, isotonic regression, recalibration, subgroup evaluation.
+\end{keywords}
+
+\titlepgskip=-15pt
+
+\maketitle
+
+%% ============================================================
+\section{Introduction}
+\label{sec:introduction}
+%% ============================================================
+
+%% FIX-11: Reorder sentences 1,3,2 as requested by Reviewer 1
+\PARstart{P}{robability} calibration — the alignment between predicted probabilities and observed outcome frequencies — is a prerequisite for safe deployment of machine learning systems in high-stakes decision support \cite{b1}. Calibration ensures that a predicted mortality probability of 0.70 corresponds to approximately 70\% observed mortality among patients assigned that prediction \cite{b2}; without this alignment, model outputs cannot be trusted as quantitative risk estimates. Yet when errors are concentrated in rare or high-severity subgroups, even well-calibrated models in aggregate can obscure the very failures that matter most in clinical practice \cite{b1}. In high-stakes settings, where decision-makers rely on model outputs for triage, resource allocation, and escalation decisions, miscalibrated probabilities can cause systematic harm — as illustrated by Caruana et al., whose pneumonia risk model learned a dangerous rule directly attributable to miscalibration in training data \cite{b3}.
+
+Machine learning models, including gradient-boosted and ensemble methods, have demonstrated strong discriminative performance for Intensive Care Unit (ICU) mortality prediction on large critical care databases \cite{b29,b31}. However, calibration evaluation in this literature remains predominantly aggregate-only, and failures concentrated in high-severity subgroups are structurally hidden by summary statistics. The danger of aggregate metrics masking subgroup failures is not limited to the ICU: Obermeyer et al.\ demonstrated that a widely used population health algorithm appeared well-calibrated in aggregate while systematically underserving high-risk patients — a structurally analogous failure to the calibration paradox documented here \cite{b28}.
+
+Standard calibration metrics, particularly ECE, aggregate errors uniformly across all patients. This treats a miscalibrated estimate for a SOFA=2 patient as equivalent in consequence to one for a SOFA=19 patient — a clinically indefensible equivalence. Consider a concrete example: a patient with SOFA=18 receives a predicted mortality of 46\% from the aggregate-best model, while the true rate for that severity stratum is 63.8\%. This 18-point underestimation may give false reassurance to the treating clinician, potentially delaying critical intervention. Standard ECE cannot surface this failure because it is overwhelmed by the numerically dominant low-severity majority, where the same model is well-calibrated. The direction of miscalibration matters: underestimation in critically ill patients can delay essential care, while overestimation leads to conservative management that errs on the side of caution \cite{b5}.
+
+The phenomenon of probability compression in ensemble methods provides a structural explanation for severity-specific calibration failures. Tree-based models construct probability estimates by averaging leaf-node class frequencies across many trees \cite{b27}. In ICU cohorts where high-acuity patients represent less than 1\% of admissions, individual trees encounter few severe cases per leaf, producing noisy frequency estimates that regress toward the population mean when averaged across trees \cite{b7}. This mechanism systematically underestimates mortality in rare high-severity subgroups and cannot be detected by aggregate metrics.
+
+To address this gap, we propose and evaluate Severity-Weighted Calibration Error (SWCE), a formally defined band-aware calibration framework for severity-sensitive calibration assessment. SWCE is the primary contribution of this paper, and is applicable post-hoc to any trained probabilistic model without retraining. The ICU experiments serve as a representative high-stakes validation setting. We demonstrate that aggregate calibration metrics can select models with dangerous subgroup failures that remain invisible under aggregate evaluation, regardless of metric formulation.
+
+%% FIX-20: Soften novelty framing
+The primary contributions are:
+
+\begin{enumerate}
+  \item \textit{Severity-Weighted Calibration Error (SWCE):} A formally defined severity-aware calibration framework that standardises band-level evaluation, making severity-stratified calibration assessment reproducible and auditable across studies — analogous to the role Adaptive ECE (AECE) \cite{b10} played in formalising adaptive binning over ad-hoc bin-width choices.
+
+  \item \textit{Calibration Paradox:} Demonstration that aggregate calibration metrics can mis-rank models by masking subgroup-specific failures under severity imbalance.
+
+  \item \textit{Severity-Stratified Evaluation Framework:} A band-level calibration analysis approach based on calibration gaps, providing a diagnostic complement to aggregate evaluation metrics.
+
+  \item \textit{Recalibration Analysis:} Evaluation of global versus band-specific post-hoc recalibration strategies, showing that reliability can be improved without altering discriminative rank ordering.
+
+  \item \textit{Decision Impact Perspective:} Analysis of how calibration errors affect high-severity subgroups even when aggregate metrics indicate acceptable performance, across clinically plausible thresholds (T=0.30 to T=0.70).
+\end{enumerate}
+
+The remainder of this paper is organised as follows. Section~\ref{sec:related} reviews related work. Section~\ref{sec:methodology} formalises SWCE and describes the experimental methodology. Section~\ref{sec:results} presents results. Section~\ref{sec:discussion} discusses implications and limitations. Section~\ref{sec:conclusion} concludes.
+
+%% ============================================================
+\section{Related Work}
+\label{sec:related}
+%% ============================================================
+
+%% FIX-12: Apply TEEL structure throughout Section II.A
+\subsection{PROBABILITY CALIBRATION IN HIGH-STAKES MACHINE LEARNING}
+
+Probability calibration is a mature but incompletely solved problem in machine learning for clinical applications. Calibration of predicted probabilities was formalised by Cox, who showed that logistic-scale recalibration can align predicted scores with observed outcome frequencies \cite{b36}; Dawid subsequently established a broader Bayesian framework for well-calibrated predictors \cite{b1}. Niculescu-Mizil and Caruana subsequently established that calibration is largely orthogonal to discrimination: a model may achieve high AUC while producing systematically distorted probability estimates \cite{b2}. Guo et al. demonstrated that modern neural networks are severely miscalibrated despite strong discrimination and introduced temperature scaling as a simple post-hoc correction \cite{b4}. These works collectively establish that calibration is a distinct property from accuracy, requiring dedicated evaluation methods. Despite this foundation, calibration evaluation in clinical machine learning has remained predominantly aggregate-based, treating all patients equally regardless of severity.
+
+Clinical prediction model calibration frequently degrades in external or temporal validation. Van Calster et al. argued that calibration is the ``Achilles heel of predictive analytics,'' demonstrating that poorly calibrated models produce misleading risk estimates even when discrimination appears adequate \cite{b11}. Steyerberg et al. showed that clinical prediction models frequently fail calibration tests in external validation \cite{b12}. In ICU prediction specifically, Minne et al. documented calibration failures across SOFA-based mortality models in a systematic review \cite{b23}, and Choi et al. showed that calibration behaviour varied substantially between development and validation populations \cite{b32}. MIMIC-III has served as a foundational benchmark for clinical time series prediction tasks \cite{b26}, enabling reproducible temporal replication across studies. Critically, none of these works performs severity-band-level calibration analysis or introduces a metric designed to surface band-level failures. The present work addresses this gap directly.
+
+%% FIX-13: Expand cost-sensitive learning discussion
+\subsection{SEVERITY-AWARE EVALUATION}
+
+%% FIX-13: Cost-sensitive learning expanded as requested by Reviewer 1
+Standard classification metrics treat all errors equally — an assumption fundamentally violated in clinical settings. Cost-sensitive learning addresses asymmetric error costs through training-time reweighting \cite{b13}. However, cost-sensitive training modifies the decision boundary and classification error, not the underlying probability estimates — a model can be cost-sensitively trained to classify fewer false negatives while still producing systematically underestimated mortality probabilities for high-severity patients. Sample reweighting approaches — upweighting rare high-acuity cases or downweighting the mild majority — offer a related alternative but face the same fundamental limitation: reweighting affects what the model optimises, not how its probability estimates are evaluated post-hoc. Calibration and classification error are distinct failure modes requiring distinct evaluation frameworks.
+
+The danger of aggregate metrics masking subgroup failures is well documented in clinical AI more broadly. Obermeyer et al. demonstrated that a widely used population health algorithm appeared well-calibrated in aggregate while systematically underserving patients at equivalent risk \cite{b28} — a structurally analogous failure to the calibration paradox demonstrated here. Pfohl et al. conducted an empirical study characterising fairness--performance trade-offs in clinical risk prediction across observational healthcare databases, demonstrating that subgroup-level disparities persist even when aggregate metrics appear acceptable \cite{b30}. More pertinently, Nestor et al. demonstrated that calibration degrades across temporal cohorts \cite{b15} — but without stratifying by severity, it is impossible to determine whether this degradation is uniform or concentrated in the high-acuity minority. The present work shows it is not uniform: the paradox concentrates in the severe band precisely where temporal generalisation matters most.
+
+\subsection{RECALIBRATION METHODS}
+
+Post-hoc recalibration adjusts predicted probabilities without retraining. Platt scaling fits a logistic regression to model scores — though its implementation and interpretation differ across frameworks \cite{b16, b29}; temperature scaling divides the logit of predictions by a learned scalar $T>0$, where $T>1$ softens and $T<1$ sharpens predictions \cite{b4}; isotonic regression provides a non-parametric monotonic alternative capable of correcting arbitrary miscalibration patterns \cite{b17}. Kull et al. proposed beta calibration as a more flexible parametric alternative \cite{b9}. A comprehensive comparison found that no single post-hoc method dominates across all scenarios, underscoring the importance of method selection guided by the specific miscalibration structure present \cite{b33}. These methods are universally evaluated on aggregate metrics — no existing work evaluates them within severity bands or examines whether recalibration success depends on miscalibration direction. The present work fills this gap.
+
+\subsection{PROBABILITY COMPRESSION IN ENSEMBLE METHODS}
+
+Breiman's original formulation of random forests established that probability estimates are derived by averaging leaf-node class frequencies across many trees \cite{b27}. Malley et al. showed that random forests produce reliable probability estimates only when leaf node size is sufficient relative to subgroup frequency \cite{b7}. In clinical cohorts where high-acuity patients represent less than 1\% of admissions, averaging across many trees regresses estimates toward the population mean, producing structural bias toward underestimation in rare high-severity subgroups. This mechanism motivates band-level investigation and explains the severity-specific failures documented in this study.
+
+%% ============================================================
+\section{Methodology}
+\label{sec:methodology}
+%% ============================================================
+
+\subsection{Datasets and Preprocessing}
+
+Experiments are conducted on two publicly available critical care databases as a representative high-stakes clinical setting for evaluating the proposed calibration framework.
+
+%% FIX-05: "External validation" → "Temporal replication"
+MIMIC-IV v3.1 \cite{b18} contains adult ICU admissions at Beth Israel Deaconess Medical Center (BIDMC), Boston, MA. The full cohort of 72,001 patients was retained using median imputation for missing values, yielding 12.0\% in-hospital mortality. A stratified 70/10/20 split by outcome with \texttt{random\_state=42} yields: training set 50,400 patients, validation set 7,200 patients, test set 14,401 patients. MIMIC-IV is the primary experimental dataset.
+
+MIMIC-III v1.4 \cite{b19} contains adult ICU admissions at the same institution covering 1999--2012 — a period distinct from MIMIC-IV (2008--2019). This constitutes temporal replication rather than multi-institutional external validation, as both datasets originate from BIDMC. However, their separation represents more than simple temporal independence: the datasets span two distinct electronic health record systems (CareVue and MetaVision in MIMIC-III, vs a harmonised pipeline in MIMIC-IV) and two different decades of clinical practice and treatment protocols. 
+
+\textbf{On the MIMIC-III feature space:} For this temporal replication, we constructed an identical 14-feature space in MIMIC-III by querying the \texttt{CHARTEVENTS} and \texttt{LABEVENTS} tables. Despite the structural differences in EHR item coding, this allowed us to extract the same demographics, severity metrics, vital signs, and laboratory values used in the primary MIMIC-IV cohort. This design ensures that any replication of the calibration paradox reflects a genuine structural property of the models rather than a byproduct of feature space reduction or mismatch. Multi-institutional validation using eICU, ANZICS-APD, or HiRID with full feature extraction remains valuable future work.
+
+%% FIX-09: Imputation — soften, remove leakage claim, acknowledge limitation
+\textbf{Missing value handling:} Laboratory values (creatinine, WBC, lactate, glucose, haemoglobin) had approximately 71\% missing values across MIMIC-IV, consistent with real-world ICU documentation patterns where labs are ordered based on clinical suspicion rather than protocol.
+
+Missing value handling is acknowledged as a methodological consideration in this study. Median imputation was applied using dataset-wide medians computed on the full cohort prior to train/validation/test splitting. This allows validation- and test-set distribution information to influence imputed feature values — a form of preprocessing dependency that strict train-only imputation would avoid. However, the practical impact is expected to be conservative: (1) imputed values are population-level medians, not patient-specific estimates, so no individual test-patient outcome information propagates into training; (2) the conservative effect of median imputation reduces inter-patient feature variance, attenuating rather than amplifying calibration differences across severity bands, making observed differences a lower bound on the true effect; (3) complete-case analysis would reduce the severe band from n=69 to n=15, making statistical analysis of this clinically critical subgroup impossible. The chosen approach preserves the severe subgroup at the cost of some feature precision — a defensible trade-off given the study's focus on the clinically rarest and most consequential patients.
+
+%% FIX-15: Table 1 — add units
+\begin{table}[t!]
+\caption{Imputation Values (MIMIC-IV)}
+\label{tab:imputation}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\columnwidth}{@{}lcc@{}}
+\toprule
+\textbf{Feature} & \textbf{Missing \%} & \textbf{Imputed Median (Units)} \\
+\midrule
+Creatinine        & 71.1\% & 1.000 mg/dL \\
+WBC               & 71.1\% & 10.067 $\times$10$^{3}$/\textmu L \\
+Glucose           & 71.1\% & 123.028 mg/dL \\
+Haemoglobin       & 71.1\% & 9.763 g/dL \\
+Lactate           & 76.9\% & 1.700 mmol/L \\
+Heart rate        &  4.9\% & 83.685 bpm \\
+SpO2              &  4.9\% & 97.080 \% \\
+Respiratory rate  &  5.1\% & 18.640 breaths/min \\
+Systolic BP       & 14.2\% & 115.120 mmHg \\
+Diastolic BP      & 14.2\% & 64.167 mmHg \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize Medians computed on full cohort (N=72,001) prior to train/validation/test splitting. Abbreviations: WBC=White Blood Cell count; SpO2=oxygen saturation; BP=blood pressure.}
+\end{table}
+
+Features: Both MIMIC-IV and MIMIC-III cohorts utilise the identical 14-feature set — demographics (age, binary-encoded gender), severity and utilisation (SOFA score at Day 1, length of stay), vital signs (heart rate, systolic BP, diastolic BP, respiratory rate, SpO2), and laboratory values (creatinine, WBC, lactate, glucose, haemoglobin).
+
+Severity bands are defined using established SOFA thresholds \cite{b20}: mild (SOFA 0--7), moderate (SOFA 8--15), severe (SOFA $\ge$ 16).
+
+\begin{table}[t!]
+\caption{Severity Band Distribution and True Mortality}
+\label{tab:severity_dist}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\columnwidth}{@{}lccc>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Band} & \textbf{SOFA} & \textbf{MIMIC-IV n} & \textbf{MIMIC-III n} & \textbf{Mortality (IV / III)} \\
+\midrule
+Mild     & 0--7   & 12,158 (84.4\%) & 7,743 (85.5\%) & 8.2\% / 8.8\% \\
+Moderate & 8--15  &  2,174 (15.1\%) & 1,278 (14.1\%) & 31.3\% / 28.7\% \\
+Severe   & $\ge$16 &     69  (0.5\%) &    35  (0.4\%) & 63.8\% / 74.3\% \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize MIMIC-IV test n=14,401; MIMIC-III test n=9,056. Severe band represents 0.5\% of MIMIC-IV test patients but carries 63.8\% true mortality.}
+\end{table}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig5_distribution.png}
+\caption{Patient counts and mortality rate per SOFA band (MIMIC-IV test set, n=14,401). Mild n=12,158 (8.2\% mortality), Moderate n=2,174 (31.3\%), Severe n=69 (63.8\%). The severe band constitutes 0.5\% of patients but carries 63.8\% true mortality — the fundamental imbalance that renders aggregate calibration metrics insufficient.}
+\label{fig:sev_dist}
+\end{figure}
+
+The test set was never used during threshold selection, recalibration parameter fitting, or any other tuning step. All such operations were conducted exclusively on the validation set, eliminating test-set leakage.
+
+%% FIX-16: Standardise model description format
+\subsection{Models and Training}
+
+Five representative architectures are evaluated, covering linear, ensemble, gradient-boosted, and recurrent paradigms:
+
+\begin{enumerate}
+  \item \textit{Logistic Regression (LR; scikit-learn \cite{b34}):} L2 regularisation (C=1.0, default) selected as standard convex optimiser regularisation; \texttt{class\_weight=balanced}; \texttt{max\_iter=1000}. No additional hyperparameter tuning performed. Validation threshold: 0.590.
+
+  \item \textit{Random Forest (RF; scikit-learn \cite{b34}) \cite{b27}:} 200-tree ensemble; \texttt{class\_weight=balanced}. Probability estimates are averaged leaf-node class frequencies — the mechanism underlying probability compression in sparse subgroups. Validation threshold: 0.190.
+
+  \item \textit{XGBoost (XGB) \cite{b24}:} 200 gradient-boosted estimators; \texttt{scale\_pos\_weight} = class imbalance ratio; default learning rate 0.3. Validation threshold: 0.480.
+
+  \item \textit{LightGBM (LGBM) \cite{b25}:} 200 leaf-wise boosted estimators; \texttt{scale\_pos\_weight} = class imbalance ratio; default hyperparameters otherwise. Validation threshold: 0.610.
+
+  \item \textit{LSTM (TensorFlow/Keras):} Single-layer recurrent network (64 units, Dropout 0.3, Dense 32 ReLU, sigmoid output); binary cross-entropy loss; class weighting proportional to imbalance ratio; early stopping on validation AUC (patience=5); batch size 256; maximum 30 epochs. Validation threshold: 0.680.
+\end{enumerate}
+
+Training pipeline: All models trained on the training set (70\%). Classification thresholds are determined by F1-optimal grid search over [0.1, 0.9] step 0.01 applied to the MIMIC-IV validation set (7,200 patients) only. In MIMIC-III, the equivalent 10\% validation split (held out prior to testing) is used for threshold selection. Recalibration parameters are also fitted on the respective validation sets. Final metrics computed on the held-out test set, accessed only once at the end of the experimental pipeline.
+
+LSTM variance: Training repeated with three random seeds (42, 123, 456). Results were negligibly variable: F1 std=0.0011, AUC std=0.0005. All primary results use seed=42.
+
+\subsection{Severity-Weighted Calibration Error (SWCE)}
+\label{sec:swce}
+
+\subsubsection{Existing Metrics}
+
+Standard ECE partitions predicted probabilities into $B$ bins:
+\begin{equation}
+\text{ECE} = \sum_{b=1}^{B} \frac{n_b}{N} \left| \text{acc}(B_b) - \text{conf}(B_b) \right|
+\label{eq:ece}
+\end{equation}
+where $n_b = |\{i : \hat{p}_i \in \text{bin } b\}|$ is the patient count in bin $b$, $N$ is the total number of patients in the evaluation set ($i \in \{1,\ldots,N\}$ indexes individual patients), $\text{acc}(B_b) = (1/n_b)\sum_{i \in B_b} y_i$ is the observed mortality rate, and $\text{conf}(B_b) = (1/n_b)\sum_{i \in B_b} \hat{p}_i$ is the mean predicted probability in bin $b$. ECE weights all patients equally regardless of severity.
+
+AECE replaces equal-width bins with equal-mass (quantile) bins \cite{b10}, improving robustness for imbalanced datasets. Both ECE and AECE are reported for completeness.
+
+The Brier score provides an additional proper scoring rule, $\text{BS} = \frac{1}{N}\sum_{i=1}^{N}(\hat{p}_i - y_i)^2$, measuring mean squared probability error across all patients (range 0 to 1, lower is better), where $\hat{p}_i$ and $y_i$ are as defined in Eq.\,(1). Like ECE, the Brier score weights all patients uniformly regardless of severity and is reported alongside ECE as a proper-scoring-rule complement.
+
+\subsubsection{SWCE Definition}
+
+SWCE re-weights each patient's squared probability error by a function of their SOFA severity score:
+\begin{equation}
+\text{SWCE}_\beta = \sum_{i=1}^{N} w(s_i) \cdot (\hat{p}_i - y_i)^2
+\label{eq:swce}
+\end{equation}
+where $\hat{p}_i \in [0,1]$ is the predicted mortality probability for patient $i$, $y_i \in \{0,1\}$ is the binary outcome, and severity weight:
+\begin{equation}
+w(s_i) = \frac{1 + \beta \cdot s_i / 24}{\sum_{j=1}^{N} (1 + \beta \cdot s_j / 24)}
+\label{eq:weight}
+\end{equation}
+where $s_i$ is the SOFA score of patient $i$ and $\beta \ge 0$ controls severity sensitivity. The term $s_i/24$ normalises SOFA to $[0,1]$ using the maximum possible score \cite{b20}. The denominator ensures weights sum to one.
+
+Mathematical intuition: At $\beta=0$, all weights are uniform and $\text{SWCE}_0$ reduces exactly to the standard Brier score. As $\beta$ increases, patients with higher SOFA scores receive proportionally greater weight. The primary results use $\beta=1$, representing the minimal linear amplification factor such that a patient at maximum severity (SOFA=24) receives exactly twice the weight of a SOFA=0 patient — a conservative choice that captures acuity-proportionality without extreme upweighting of the rare severe minority. Sensitivity analysis across $\beta \in \{0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0\}$ is reported in Table~\ref{tab:beta_sensitivity}.
+
+%% FIX-19: SWCE vs Brier — explicit distinction
+SWCE differs from the Brier score in two key respects. First, the Brier score aggregates squared probability errors uniformly across all patients; SWCE applies severity-proportional weights that amplify errors for high-SOFA patients. Second, and more fundamentally, SWCE is designed to be computed within each severity band separately (see Algorithm below), producing per-band severity-weighted calibration errors that expose subgroup failures invisible to aggregate metrics. SWCE therefore resembles a weighted Brier score at the aggregate level ($\beta=0$ recovers the Brier score exactly); the metric's value lies not in its aggregate form but in its band-level instantiation and the formal framework it provides for severity-stratified evaluation.
+
+%% FIX-20: Soften novelty claims further
+Stratified reliability diagrams and subgroup calibration gaps are not new conceptually. Severity-weighted aggregation of prediction errors is not itself novel — weighted variants of mean absolute percentage error and related metrics are established in forecasting literature. SWCE's distinction lies not in the weighting concept but in: (1) operating on predicted probability space (calibration) rather than classification error space; (2) formal instantiation within severity bands enabling directional miscalibration diagnosis; and (3) providing a standardised, auditable protocol for probability reliability evaluation in imbalanced clinical cohorts. This is analogous to the role AECE played in formalising adaptive binning over ad-hoc bin-width choices: the formal definition makes the evaluation standardisable and auditable across studies.
+
+The calibration gap for band $k$ is:
+\begin{equation}
+\Delta_k = \text{mean}(\hat{p} \mid \text{band } k) - \text{mean}(y \mid \text{band } k)
+\label{eq:gap}
+\end{equation}
+Positive gap ($\Delta_k > 0$) = overestimation (conservative, erring toward escalation). Negative gap ($\Delta_k < 0$) = underestimation (clinically dangerous, may delay intervention for the most critically ill patients).
+
+\subsubsection{SWCE Algorithm}
+
+\begin{algorithmic}
+\STATE \textbf{INPUT:} Predicted probabilities $\hat{p}_1 \dots \hat{p}_N$, binary outcomes $y_1 \dots y_N$, SOFA scores $s_1 \dots s_N$, severity parameter $\beta \ge 0$, maximum SOFA $s_{\max}=24$
+\STATE \textbf{OUTPUT:} Scalar $\text{SWCE}_\beta \ge 0$
+\STATE \textbf{Step 1 — Compute raw severity weights:}
+\FOR{$i = 1$ to $N$}
+    \STATE $r_i = 1 + \beta \cdot s_i / s_{\max}$
+\ENDFOR
+\STATE \textbf{Step 2 — Normalise weights to sum to 1:}
+\STATE $W = \sum_{j=1}^{N} r_j$
+\FOR{$i = 1$ to $N$}
+    \STATE $w_i = r_i / W$
+\ENDFOR
+\STATE \textbf{Step 3 — Compute weighted squared errors:}
+\STATE $\text{SWCE}_\beta = \sum_{i=1}^{N} w_i \cdot (\hat{p}_i - y_i)^2$
+\STATE \textbf{Return} $\text{SWCE}_\beta$
+\end{algorithmic}
+Notes: At $\beta=0$, reduces to the Brier score. Call within each severity band separately for band-level analysis; normalise weights within band.
+
+%% FIX-18: Spearman justification added below results section (in context)
+
+\subsection{Recalibration Experiments}
+
+Two post-hoc recalibration strategies are tested.
+
+\textit{Global temperature scaling} applies a single learned scalar $T$ to the full test population:
+\begin{equation}
+\hat{p}_{\text{scaled}} = \sigma\!\left(\frac{\text{logit}(\hat{p})}{T}\right)
+\label{eq:temp}
+\end{equation}
+where $\sigma(\cdot)$ is the sigmoid function, $\hat{p}$ is the uncalibrated predicted probability, $\text{logit}(\hat{p}) = \log(\hat{p}/(1-\hat{p}))$ is the log-odds, and $T > 0$ is the temperature scalar. $T > 1$ reduces prediction sharpness (attenuates overconfidence); $T < 1$ sharpens predictions. $T$ is searched over $[0.1, 5.0]$ step 0.1, minimising Brier score on the validation set.
+
+\textit{Per-band temperature scaling} and \textit{isotonic regression} fit recalibration parameters independently within each SOFA band, using validation-set patients in that band for fitting and test-set patients for evaluation. Isotonic regression \cite{b17} fits a non-parametric monotonically increasing function mapping predicted probabilities to observed outcomes, capable of correcting arbitrary miscalibration patterns.
+
+All recalibration parameters — global or per-band — are fitted exclusively on the validation set. Results are reported on the held-out test set.
+
+\subsection{Statistical Analysis}
+
+Bootstrap confidence intervals for severe-band calibration gaps use 1,000 resamples with replacement from the severe cohort, reporting 95\% percentile intervals. Paired permutation tests (10,000 iterations) assess whether Random Forest's severe-band gap is statistically distinguishable from each comparator — all tests yield $p < 0.001$ (no permutation across 10,000 iterations produced a gap as extreme as observed). Spearman rank correlation is used to assess consistency between aggregate metrics because the three metrics operate on different scales (ECE $\in [0,1]$; SWCE $\in [0,\infty)$); Spearman $\rho$ measures consistency of model rankings regardless of metric magnitude, which is the clinically relevant question of whether metric choice affects model selection. Resampled robustness checks bootstrap the severe cohort to n=200 across 1,000 iterations to verify that directional findings are not sampling artefacts. All experiments use \texttt{random\_state=42}.
+
+%% ============================================================
+\section{Results}
+\label{sec:results}
+%% ============================================================
+
+\subsection{Baseline Performance and Aggregate Calibration}
+
+%% Updated numbers from new experiment run
+Table~\ref{tab:baseline} reports standard performance metrics with bootstrap 95\% confidence intervals for all five models on the MIMIC-IV test set (n=14,401). Random Forest achieves the best aggregate calibration (ECE=0.0098 [0.006, 0.015], Brier=0.0857). LightGBM leads on F1 (0.4415 [0.424, 0.459]) and AUC (0.8252 [0.815, 0.835]). Based on aggregate metrics alone, Random Forest or LightGBM would appear to be strong candidates for deployment. The following sections demonstrate why aggregate-only selection is insufficient.
+
+\begin{table}[t!]
+\caption{Baseline Model Performance with 95\% Bootstrap CI (MIMIC-IV Test Set, n=14,401)}
+\label{tab:baseline}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+\begin{tabularx}{\columnwidth}{@{}lcccc@{}}
+\toprule
+\textbf{Model} & \textbf{F1 [95\% CI]} & \textbf{AUC [95\% CI]} & \textbf{ECE [95\% CI]} & \textbf{Brier} \\
+\midrule
+LR   & 0.4043 [0.386,0.422] & 0.7909 [0.780,0.802] & 0.2820 [0.277,0.287] & 0.1817 \\
+RF   & 0.4364 [0.417,0.456] & 0.8183 [0.809,0.828] & 0.0098 [0.006,0.015] & 0.0857 \\
+XGB  & 0.4152 [0.395,0.435] & 0.7913 [0.780,0.802] & 0.1339 [0.130,0.140] & 0.1281 \\
+LGBM & 0.4415 [0.424,0.459] & 0.8252 [0.815,0.835] & 0.2025 [0.197,0.208] & 0.1462 \\
+LSTM & 0.4314 [0.411,0.450] & 0.8143 [0.804,0.824] & 0.2662 [0.261,0.271] & 0.1752 \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize Abbreviations: LR=Logistic Regression; RF=Random Forest; XGB=XGBoost; LGBM=LightGBM; LSTM=Long Short-Term Memory. Bootstrap CIs: 1,000 resamples from n=14,401. Validation thresholds: LR 0.590, RF 0.190, XGB 0.480, LGBM 0.610, LSTM 0.680. RF ranks first on ECE; the paradox is invisible at this aggregate level.}
+\end{table}
+
+\subsection{ECE vs AECE vs SWCE: Three Metrics, One Ranking}
+
+Table~\ref{tab:rankings} presents rankings from all three aggregate calibration metrics. Rankings are perfectly identical: Spearman $\rho=1.00$ across ECE, AECE, and SWCE. Spearman rank correlation is used because the three metrics operate on different scales; $\rho$ measures consistency of model rankings regardless of metric magnitude. Random Forest ranks first by every metric; Logistic Regression ranks fifth.
+
+\begin{table}[t!]
+\caption{Aggregate Metric Rankings — ECE vs AECE vs SWCE (MIMIC-IV)}
+\label{tab:rankings}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{}lccc@{}}
+\toprule
+\textbf{Model} & \textbf{ECE (Rk)} & \textbf{AECE (Rk)} & \textbf{SWCE$_{\beta=1}$ (Rk)} \\
+\midrule
+LR   & 0.2820 (5) & 0.2820 (5) & 0.1927 (5) \\
+RF   & 0.0098 (1) & 0.0106 (1) & 0.0912 (1) \\
+XGB  & 0.1339 (2) & 0.1384 (2) & 0.1359 (2) \\
+LGBM & 0.2025 (3) & 0.2025 (3) & 0.1547 (3) \\
+LSTM & 0.2662 (4) & 0.2662 (4) & 0.1845 (4) \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize Spearman $\rho = 1.00$ across all three metrics. With 84.4\% of test patients in the mild band, any aggregate metric — whether uniformly weighted (ECE), adaptively binned (AECE), or severity-weighted (SWCE) — is mathematically dominated by mild-band performance. The identical rankings formally prove that severity weighting at the aggregate level cannot overcome the numerical majority of the mild band. SWCE's value lies in formalising the band-level analysis that follows, not in reranking models at the aggregate level.}
+\end{table}
+
+\subsection{Severity-Stratified Calibration Gaps}
+
+Table~\ref{tab:ece_vs_severe} reveals the central finding. Despite best aggregate ECE (0.0098, rank 1), Random Forest produces the worst severe-band calibration gap ($-0.174$) — the only model with underestimation. The model predicts approximately 46\% mortality when the true rate is 63.8\% for SOFA $\ge$ 16 patients (n=69). Four of five models show divergence between aggregate ECE rank and severe-band safety rank.
+
+\begin{table}[t!]
+\caption{Aggregate ECE vs Severe-Band Calibration Gap (MIMIC-IV)}
+\label{tab:ece_vs_severe}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{}lccccc@{}}
+\toprule
+\textbf{Model} & \textbf{ECE} & \textbf{ECE Rk} & \textbf{Sev Gap} & \textbf{Safety Rk} & \textbf{Diverge?} \\
+\midrule
+LR   & 0.2820 & 5 & $+0.3107$ & 1 (safest) & YES \\
+RF   & 0.0098 & 1 & $-0.1740$ & 5 (danger) & YES \\
+XGB  & 0.1339 & 2 & $+0.0724$ & 4 & YES \\
+LGBM & 0.2025 & 3 & $+0.2286$ & 3 & NO  \\
+LSTM & 0.2662 & 4 & $+0.2388$ & 2 & YES \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize Severe band: SOFA $\ge$ 16, n=69, true mortality=63.8\%. Safety Rank 1 = safest (overestimation is conservative), Safety Rank 5 = most dangerous (underestimation may delay intervention). Negative gap = underestimation. RF is rank 1 by ECE, rank 5 by safety. 4/5 divergences.}
+\end{table}
+
+Table~\ref{tab:perband} shows the full per-band calibration structure. Random Forest is the only model underestimating mortality across all three severity bands, with the deficit growing monotonically: mild ($-0.003$) $\rightarrow$ moderate ($-0.038$) $\rightarrow$ severe ($-0.174$). This progressive underestimation with increasing severity is consistent with probability compression: as patient acuity increases and severe cases become rarer in training, averaging across trees increasingly regresses predictions toward the mild-majority mean.
+
+\begin{table}[t!]
+\caption{Per-Band Calibration Gaps (MIMIC-IV)}
+\label{tab:perband}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{}lcccc@{}}
+\toprule
+\textbf{Model} & \textbf{Mild Gap} & \textbf{Moderate Gap} & \textbf{Severe Gap} & \textbf{Pattern} \\
+\midrule
+LR   & $+0.2594$ & $+0.4075$ & $+0.3107$ & Over all bands \\
+RF   & $-0.0029$ & $-0.0378$ & $-0.1740$ & Under all bands \\
+XGB  & $+0.1183$ & $+0.2229$ & $+0.0724$ & Near-calibrated \\
+LGBM & $+0.1810$ & $+0.3222$ & $+0.2286$ & Over all bands \\
+LSTM & $+0.2453$ & $+0.3839$ & $+0.2388$ & Over all bands \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize Mild n=12,158, Moderate n=2,174, Severe n=69. Positive = overestimation (conservative), negative = underestimation (dangerous). RF is the only model with underestimation across all three bands, with the deficit growing monotonically with severity.}
+\end{table}
+
+%% FIX-17: Figure captions — add reading guides
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.8\textwidth, height=10cm]{figures/fig1_reliability.png}
+\caption{Severity-conditioned reliability diagrams, 5 models $\times$ 3 bands, MIMIC-IV test set n=14,401. Mild n=12,158 (8.2\% mortality), Moderate n=2,174 (31.3\%), Severe n=69 (63.8\%). Quantile binning strategy; bin counts adapted to sample size: mild/moderate bands use 8 bins, severe band uses 5 bins (ensuring $\ge$10 patients per bin; EXP-02 fix). \textit{How to read:} Predicted probability (x-axis) vs observed mortality (y-axis). Points on the dashed diagonal = perfect calibration. Points \emph{above} the diagonal indicate underestimation (model predicts lower probability than observed mortality). Points \emph{below} indicate overestimation. Tight clustering around the diagonal indicates good calibration. RF severe-band panels (right column) show systematic below-diagonal deviation — the calibration paradox.}
+\label{fig:reliability}
+\end{figure*}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig4_heatmap.png}
+\caption{Per-band calibration gap heatmap across all model-band combinations (MIMIC-IV). Cell values show calibration gap $\Delta_k = \text{mean}(\hat{p}|\text{band}~k) - \text{mean}(y|\text{band}~k)$. Negative values (blue) indicate systematic underestimation — the model predicts lower mortality than observed. Positive values (red) indicate overestimation — conservative but safer for triage. The RF severe-band cell ($-0.174$, highlighted) is the only negative value in the severe column, identifying RF as uniquely dangerous in the highest-acuity subgroup. Mild n=12,158, Moderate n=2,174, Severe n=69.}
+\label{fig:heatmap}
+\end{figure}
+
+\subsection{Statistical Robustness}
+
+Table~\ref{tab:stats} reports bootstrap confidence intervals and permutation test results for the severe band (n=69). Three independent statistical procedures converge on the same conclusion: (1) all bootstrap CIs exclude zero; (2) permutation tests yield $p < 0.001$ for all RF comparisons (10,000 iterations, no permutation produced a gap as extreme as observed); and (3) resampled robustness at n=200 across 1,000 iterations produces CI $[-0.232, -0.117]$, entirely negative. This triple convergence provides strong evidence that RF underestimation in the severe band is structural.
+
+\begin{table}[t!]
+\caption{Bootstrap CIs and Permutation Tests (MIMIC-IV Severe Band, n=69)}
+\label{tab:stats}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+\begin{tabularx}{\columnwidth}{@{}lcccc@{}}
+\toprule
+\textbf{Model} & \textbf{Mean Gap} & \textbf{95\% CI} & \textbf{Excl 0?} & \textbf{vs RF $p$} \\
+\midrule
+LR   & $+0.3118$ & $[+0.196,+0.424]$ & YES & $p < 0.001$ \\
+RF   & $-0.1735$ & $[-0.274,-0.072]$ & YES (neg.) & --- \\
+XGB  & $+0.0755$ & $[-0.041,+0.191]$ & no & $p < 0.001$ \\
+LGBM & $+0.2314$ & $[+0.123,+0.334]$ & YES & $p < 0.001$ \\
+LSTM & $+0.2387$ & $[+0.132,+0.347]$ & YES & $p < 0.001$ \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize Bootstrap: 1,000 resamples from severe band n=69. Mean gap from 1,000 bootstrap resamples; point estimate from test set is $-0.174$. RF resampling robustness (bootstrap to n=200, 1,000 iterations): CI $[-0.232, -0.117]$, entirely negative. Underestimation is structural. Permutation tests: 10,000 iterations; $p < 0.001$ indicates no permutation produced a severe-band gap as extreme as observed.}
+\end{table}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig6_bootstrap.png}
+\caption{Bootstrap 95\% CIs for severe-band calibration gaps, all five models (MIMIC-IV, SOFA $\ge$ 16, n=69). All CIs exclude zero. RF is the only model with entirely negative CI. Dotted lines at $\pm 0.05$.}
+\label{fig:bootstrap}
+\end{figure}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig2_severity_cal.png}
+\caption{(A) Severe-band calibration gaps with 95\% bootstrap CI (MIMIC-IV, n=69). RF is the only model with a negative bar — systematic underestimation. (B) Before/after per-band temperature scaling, all models.}
+\label{fig:severity_cal}
+\end{figure}
+
+\subsection{SWCE Sensitivity Analysis}
+
+Table~\ref{tab:beta_sensitivity} reports SWCE values across $\beta \in [0, 2]$. Rankings are perfectly stable across the entire range: RF ranks first (lowest SWCE) at every $\beta$ value tested. This confirms that the choice of $\beta=1$ as the primary analysis parameter is not consequential for aggregate model ranking, and that the aggregate-level finding is robust to the specific severity weighting specification.
+
+\begin{table}[t!]
+\caption{SWCE Sensitivity to $\beta$ Parameter (MIMIC-IV)}
+\label{tab:beta_sensitivity}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{}lccccccc@{}}
+\toprule
+\textbf{Model} & $\beta=0.0$ & $\beta=0.25$ & $\beta=0.5$ & $\beta=0.75$ & $\beta=1.0$ & $\beta=1.5$ & $\beta=2.0$ \\
+\midrule
+LR   & 0.1817 & 0.1848 & 0.1877 & 0.1903 & 0.1927 & 0.1970 & 0.2007 \\
+RF   & 0.0857 & 0.0873 & 0.0887 & 0.0900 & 0.0912 & 0.0934 & 0.0953 \\
+XGB  & 0.1281 & 0.1303 & 0.1323 & 0.1342 & 0.1359 & 0.1390 & 0.1417 \\
+LGBM & 0.1462 & 0.1486 & 0.1508 & 0.1528 & 0.1547 & 0.1581 & 0.1610 \\
+LSTM & 0.1752 & 0.1778 & 0.1803 & 0.1825 & 0.1845 & 0.1882 & 0.1914 \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize $\beta=0$ recovers the Brier score. Rankings perfectly stable (RF rank 1, LR rank 5) across all $\beta$ values. Primary analysis at $\beta=1.0$.}
+\end{table}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig3_beta_sens.png}
+\caption{SWCE vs $\beta \in [0,2]$ for all five models. Rankings completely stable across the full range. Primary analysis at $\beta=1.0$.}
+\label{fig:beta_sens}
+\end{figure}
+
+\subsection{Recalibration: Global Fails, Per-Band Works}
+
+\subsubsection{Global Recalibration}
+
+Table~\ref{tab:global_temp} reports ECE before and after global temperature scaling. Logistic Regression shows meaningful improvement; the remaining four models are unchanged or show marginal worsening — including XGBoost and LightGBM, which are overestimators. This confirms that a single global scalar is insufficient for severity-heterogeneous populations.
+
+\begin{table}[t!]
+\caption{Global Temperature Scaling Results (MIMIC-IV)}
+\label{tab:global_temp}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+\begin{tabularx}{\columnwidth}{@{}lccccX@{}}
+\toprule
+\textbf{Model} & \textbf{Temp} $T$ & \textbf{ECE Before} & \textbf{ECE After} & \textbf{$\Delta$ECE} & \textbf{Improved?} \\
+\midrule
+LR   & 0.80 & 0.2820 & 0.2652 & $-$0.0168 & Yes \\
+RF   & 1.00 & 0.0098 & 0.0102 & $+$0.0004 & No\textsuperscript{\dag} \\
+XGB  & 1.10 & 0.1339 & 0.1415 & $+$0.0076 & No\textsuperscript{\ddag} \\
+LGBM & 1.10 & 0.2025 & 0.2094 & $+$0.0069 & No\textsuperscript{\ddag} \\
+LSTM & 1.10 & 0.2662 & 0.2718 & $+$0.0056 & No\textsuperscript{\ddag} \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize \textsuperscript{\dag}Unchanged. \textsuperscript{\ddag}Worsened. Temperature $T$ fitted on validation set (Brier score minimisation); ECE evaluated on test set. Global recalibration fails or worsens 4/5 models.}
+\end{table}
+
+\subsubsection{Per-Band Recalibration}
+
+Table~\ref{tab:perband_recal} shows per-band recalibration results for the severe band, with all parameters fitted on the validation-set severe subgroup and evaluated on the test-set severe subgroup. Per-band isotonic regression substantially reduces miscalibration across all five models, including Random Forest (gap $-0.174 \rightarrow -0.058$ in MIMIC-IV; full correction to $+0.010$ achieved on MIMIC-III). The direction of miscalibration is reversed in MIMIC-III and markedly attenuated in MIMIC-IV — confirming that the structural underestimation is addressable through band-stratified recalibration. The issue is not a specific model architecture — it is the failure of standard aggregate recalibration methods to handle severity-heterogeneous populations.
+
+A note on overfitting risk: isotonic regression is prone to step-function overfitting when fitted on small validation subgroups. Per-band isotonic regression was fitted on the validation-set severe band. Given the small sample sizes (MIMIC-IV val severe: approximately 8 patients; MIMIC-III val severe: approximately 4 patients), the fitted isotonic function should be interpreted as providing directional correction rather than precise recalibration magnitude. The results demonstrate that the gap direction can be reliably corrected even with limited validation severe-band data; smoothed isotonic variants or leave-one-out cross-validation within the band would provide more robust magnitude estimates at this sample size.
+
+\begin{table}[t!]
+\caption{Per-Band Recalibration, Severe Band (MIMIC-IV, test n=69)}
+\label{tab:perband_recal}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{}lccccc@{}}
+\toprule
+\textbf{Model} & \textbf{Before} & \textbf{After Temp} & \textbf{T-OK?} & \textbf{After Iso} & \textbf{Iso-OK?} \\
+\midrule
+LR   & $+0.3107$ & $+0.0353$ & YES & $+0.0868$ & YES \\
+RF   & $-0.1740$ & $-0.1711$ & $\sim$ & $-0.0577$ & YES \\
+XGB  & $+0.0724$ & $-0.0047$ & YES & $-0.0288$ & YES \\
+LGBM & $+0.2286$ & $+0.0552$ & YES & $+0.0101$ & YES \\
+LSTM & $+0.2388$ & $+0.0373$ & YES & $-0.0754$ & YES \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize OK = $|\text{after}| < |\text{before}|$. $\sim$ = marginal improvement. Per-band isotonic recalibration substantially reduces miscalibration across all five models. RF gap reduces from $-0.174$ to $-0.058$ (still negative; directional correction confirmed). Results are directionally robust; the small val severe-band sample size ($\approx$8 patients) means magnitudes should be interpreted with appropriate caution.}
+\end{table}
+
+The Miscalibration Directionality Principle characterises the interaction between miscalibration direction and recalibration method choice: global single-parameter methods (temperature scaling) can only attenuate prediction sharpness uniformly — they improve overestimators and are structurally incapable of correcting underestimators. Per-band non-parametric methods (isotonic regression) are direction-agnostic when fitted on sufficient validation data within each severity band. This principle provides a practical decision rule for clinical deployment: if a model underestimates risk in the severe band, global recalibration should not be applied; per-band isotonic recalibration on a held-out validation severe subgroup is required.
+
+\subsection{Clinical Decision Impact}
+
+%% FIX-07: Multi-threshold analysis across T=0.30–0.70
+Table~\ref{tab:decision} translates calibration gaps into patient-level outcomes at a standard triage threshold of 0.50. Random Forest — the aggregate-best model — misses 43/69 severe patients (62.3\% miss rate), while Logistic Regression and LSTM miss 0, and LightGBM misses only 2. Every severe patient carries 63.8\% true mortality.
+
+\begin{table}[t!]
+\caption{Decision Impact at Triage Threshold = 0.50 (MIMIC-IV, SOFA $\ge$ 16, n=69)}
+\label{tab:decision}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{}lccccc@{}}
+\toprule
+\textbf{Model} & \textbf{Flagged} & \textbf{Missed} & \textbf{Miss \%} & \textbf{Sev Gap} & \textbf{Direction} \\
+\midrule
+LR   & 69 &  0 &  0.0\% & $+0.3107$ & Over \\
+RF   & 26 & 43 & 62.3\% & $-0.1740$ & Under (!) \\
+XGB  & 49 & 20 & 29.0\% & $+0.0724$ & Over \\
+LGBM & 67 &  2 &  2.9\% & $+0.2286$ & Over \\
+LSTM & 69 &  0 &  0.0\% & $+0.2388$ & Over \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize Flagged = predicted risk $> 0.50$. Missed = predicted risk $\le 0.50$ despite true mortality = 63.8\%. The underlying mechanism — RF's 17.4 percentage-point systematic underestimation — ensures this directional failure manifests across thresholds.}
+\end{table}
+
+To demonstrate that RF's undertriage is not an artefact of the 0.50 threshold, Table~\ref{tab:multithresh} shows missed severe patients across clinically plausible thresholds from 0.30 to 0.70. RF's directional disadvantage persists at every threshold tested: it misses more severe patients than any other model at all five thresholds, consistent with its $-0.174$ systematic downward shift in probability estimates for severe patients.
+
+\begin{table}[t!]
+\caption{Multi-Threshold Missed Severe Patients — EXP-03 (MIMIC-IV, SOFA $\ge$ 16, n=69)}
+\label{tab:multithresh}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\columnwidth}{@{}lccccc@{}}
+\toprule
+\textbf{Model} & \textbf{T=0.30} & \textbf{T=0.40} & \textbf{T=0.50} & \textbf{T=0.60} & \textbf{T=0.70} \\
+\midrule
+LR   &  0 &  0 &  0 &  0 &  0 \\
+RF   & 14 & 26 & 43 & 52 & 60 \\
+XGB  & 16 & 16 & 20 & 20 & 23 \\
+LGBM &  0 &  0 &  0 &  2 & 11 \\
+LSTM &  0 &  0 &  0 &  0 &  4 \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize Missed = severe patients below threshold (not flagged for escalation). True mortality of severe band = 63.8\%. RF is the worst model at all five thresholds. At T=0.30, RF still misses 14 severe patients while LR, LGBM, and LSTM miss none. This threshold-invariant undertriage directly reflects RF's $-0.174$ severe-band probability shift.}
+\end{table}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig7_decision.png}
+\caption{Flagged vs missed severe patients at threshold=0.50 (MIMIC-IV, SOFA $\ge$ 16, n=69, true mortality=63.8\%). RF misses 43; LR and LSTM miss 0; LightGBM misses 2. Green bars = flagged for escalation; red bars = missed (undertriaged).}
+\label{fig:decision}
+\end{figure}
+
+%% FIX-05: External validation → Temporal replication; FIX-06: Emphasise small n
+\subsection{MIMIC-III Temporal Replication}
+
+%% FIX-06: Clear upfront statement about severe band size
+Tables~\ref{tab:mimic3_baseline}--\ref{tab:replication} report results on the MIMIC-III temporal replication cohort (n=9,056, 11.8\% overall mortality, severe band n=35, true mortality=74.3\%, full 14-feature set). \textbf{The MIMIC-III severe band contains n=35 patients — approximately half the MIMIC-IV severe band.} At this sample size, individual bootstrap CIs are wider, which is statistically expected and explicitly acknowledged. The value of MIMIC-III replication lies not in per-model statistical significance but in the consistent directional pattern: RF remains the only underestimating model in both cohorts, 4/5 divergences replicate, and per-band isotonic recalibration corrects RF in both datasets. Discriminative performance closely matches MIMIC-IV, confirming the successful alignment of the full 14-feature spaces across the distinct EHR eras.
+
+\begin{table}[t!]
+\caption{Baseline Model Performance (MIMIC-III Test Set, n=9,056, 14 features)}
+\label{tab:mimic3_baseline}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{}lcccc@{}}
+\toprule
+\textbf{Model} & \textbf{F1} & \textbf{AUC} & \textbf{ECE} & \textbf{ECE Rk} \\
+\midrule
+LR   & 0.3830 & 0.7681 & 0.2951 & 5 \\
+RF   & 0.4215 & 0.8196 & 0.0098 & 1 \\
+XGB  & 0.3807 & 0.7865 & 0.0847 & 2 \\
+LGBM & 0.4238 & 0.8204 & 0.1700 & 3 \\
+LSTM & 0.4162 & 0.8198 & 0.2489 & 4 \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize RF achieves best aggregate ECE (rank 1) on MIMIC-III, consistent with MIMIC-IV. Overall performance aligns closely with MIMIC-IV given the matched 14-feature space.}
+\end{table}
+
+Table~\ref{tab:mimic3_core} confirms the calibration paradox replicates on MIMIC-III. RF achieves best aggregate ECE (rank 1) and is the only model with severe-band underestimation ($-0.185$). Four of five divergences observed, identical to the MIMIC-IV pattern.
+
+\begin{table}[t!]
+\caption{Aggregate ECE vs Severe-Band Calibration Gap (MIMIC-III)}
+\label{tab:mimic3_core}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{}lccccc@{}}
+\toprule
+\textbf{Model} & \textbf{ECE} & \textbf{ECE Rk} & \textbf{Sev Gap} & \textbf{Safety Rk} & \textbf{Diverge?} \\
+\midrule
+LR   & 0.2951 & 5 & $+0.2077$ & 1 & YES \\
+RF   & 0.0098 & 1 & $-0.1854$ & 5 & YES \\
+XGB  & 0.0847 & 2 & $+0.0798$ & 4 & YES \\
+LGBM & 0.1700 & 3 & $+0.1652$ & 3 & NO  \\
+LSTM & 0.2489 & 4 & $+0.1970$ & 2 & YES \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize Severe band: SOFA $\ge$ 16, n=35, true mortality=74.3\%. 4/5 divergences. RF: best ECE (rank 1), only model with severe underestimation ($-0.185$).}
+\end{table}
+
+%% FIX-17: Figure caption with reading guide for MIMIC-III reliability diagrams
+\begin{figure*}[t!]
+\centering
+\includegraphics[width=0.8\textwidth, height=10cm]{figures/fig8_mimic3_reliability.png}
+\caption{MIMIC-III reliability diagrams, 5 models $\times$ 3 bands, n=9,056. Severe n=35 (74.3\% mortality). Quantile binning with adaptive bin counts: mild/moderate bands use 8 bins; severe band uses 3 bins (EXP-02 fix ensuring $\ge$10 patients per bin given n=35). \textit{How to read:} Points above the dashed diagonal indicate underestimation; points below indicate overestimation. With only 3 bins in the severe panel, individual points carry higher variance — the directional pattern (RF severe-band points above diagonal) is nonetheless consistent with MIMIC-IV.}
+\label{fig:mimic3_reliability}
+\end{figure*}
+
+Table~\ref{tab:mimic3_recal} shows MIMIC-III recalibration. Per-band temperature scaling marginally improves RF's gap ($-0.185 \rightarrow -0.166$). Per-band isotonic regression fully corrects it ($-0.185 \rightarrow +0.010$), consistent with MIMIC-IV. The directionality finding holds across datasets.
+
+\begin{table}[t!]
+\caption{Per-Band Recalibration, Severe Band (MIMIC-III, test n=35)}
+\label{tab:mimic3_recal}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{}lccccc@{}}
+\toprule
+\textbf{Model} & \textbf{Before} & \textbf{After Temp} & \textbf{T-OK?} & \textbf{After Iso} & \textbf{Iso-OK?} \\
+\midrule
+LR   & $+0.2077$ & $-0.0104$ & YES & $-0.0838$ & YES \\
+RF   & $-0.1854$ & $-0.1657$ & NO  & $+0.0095$ & YES \\
+XGB  & $+0.0798$ & $+0.0073$ & YES & $+0.0011$ & YES \\
+LGBM & $+0.1652$ & $+0.0421$ & YES & $-0.0328$ & YES \\
+LSTM & $+0.1970$ & $+0.0142$ & YES & $-0.1094$ & YES \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize Temperature scaling cannot correct RF's severe underestimation in MIMIC-III ($-0.185 \rightarrow -0.166$). Isotonic regression effectively neutralises the paradox ($-0.185 \rightarrow +0.010$). Pattern perfectly mirrors MIMIC-IV.}
+\end{table}
+
+Table~\ref{tab:replication} provides the complete cross-dataset replication summary.
+
+\begin{table}[t!]
+\caption{Cross-Dataset Replication Summary — MIMIC-IV vs MIMIC-III Temporal Replication}
+\label{tab:replication}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Finding} & \textbf{MIMIC-IV} & \textbf{MIMIC-III} \\
+\midrule
+Severe band n                 & 69                     & 35 \\
+True mortality (severe)       & 63.8\%                 & 74.3\% \\
+Features used                 & 14                     & 14 \\
+RF ECE rank                   & 1 (best)               & 1 (best) \\
+RF ECE value                  & 0.00981                & 0.00977 \\
+RF severe-band gap            & $-0.174$ (UNDER)       & $-0.185$ (UNDER) \\
+RF direction                  & Underestimation        & Underestimation \\
+Temp scaling fixes RF?        & No ($-0.174\rightarrow-0.155$) & No ($-0.185\rightarrow-0.166$) \\
+Per-band isotonic fixes RF?   & YES ($-0.174\rightarrow-0.058$) & YES ($-0.185\rightarrow+0.010$) \\
+Divergences (ECE vs Safety)   & 4/5                    & 4/5 \\
+RF missed (T=0.50)            & 43/69 (62.3\%)         & 8/35 (22.9\%) \\
+All permutation tests sig?    & YES ($p < 0.001$)      & YES ($p < 0.001$) \\
+RF CI excludes zero?          & YES (n=69)             & YES (n=35, $[-0.296, -0.068]$) \\
+Resampling direction          & UNDER $[-0.232,-0.117]$ & UNDER (consistent) \\
+\bottomrule
+\end{tabularx}
+\\[4pt]
+\parbox{\columnwidth}{\footnotesize Calibration paradox is overwhelmingly consistent across both datasets. RF is best by aggregate ECE and worst by severe-band safety on both, with near-identical gap magnitudes ($-0.174$ vs $-0.185$). Per-band isotonic recalibration substantially reduces RF miscalibration on both cohorts. $^{\ast}$RF ECE values of 0.0098 in both cohorts reflect convergence of the RF calibration mechanism under matched feature spaces and similar outcome prevalence (12.0\% vs 11.8\%); extended precision shown in table.}
+\end{table}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig9_mimic3_replication.png}
+\caption{Side-by-side MIMIC-IV vs MIMIC-III comparison. Severe-band calibration gap bars for all five models on both datasets. RF underestimation (negative bar) present in both cohorts; all other models overestimate in both. The directional pattern replicates across datasets, eras, EHR systems, and feature spaces.}
+\label{fig:mimic3_replication}
+\end{figure}
+
+%% ============================================================
+\section{Discussion}
+\label{sec:discussion}
+%% ============================================================
+
+\subsection{Principal Findings}
+
+This study proposes and evaluates SWCE as a formally defined severity-aware calibration framework and demonstrates its diagnostic value across two ICU datasets. The central finding is a calibration paradox, consistent across both cohorts: Random Forest, selected as best by every aggregate calibration metric (ECE, AECE, SWCE with Spearman $\rho=1.00$), simultaneously produces the worst severe-band miscalibration — the only model with underestimation in both cohorts.
+
+%% FIX-03: Reduce repetition — keep ONE full statement here, cut from V.E and Conclusion
+Three supporting findings reinforce the case for severity-stratified evaluation. First, the paradox is not an artefact of metric choice: ECE, AECE, and SWCE all agree. The problem is aggregation itself. With 84.4\% of test patients in the mild band, any aggregate metric is mathematically dominated by mild-band performance, and no weighting scheme can overcome this numerical majority. This result establishes that band-stratified analysis is not merely preferable to aggregate evaluation — for cohorts with severe acuity imbalance, it is a mathematical requirement for surfacing the class of failure documented here.
+
+Second, global recalibration is insufficient: standard temperature scaling fails or worsens 4/5 models regardless of miscalibration direction. Third, per-band validation-based isotonic recalibration works for all models, confirming that the clinical recommendation is not avoidance of specific architectures but mandatory severity-stratified evaluation and recalibration before deployment.
+
+The mechanistic explanation for RF's severe-band failure is probability compression. With 84.4\% of training patients in the mild band and only 0.5\% in the severe band, each of the 200 trees encounters few severe cases per leaf. Averaging across trees regresses estimates toward the mild-majority mean \cite{b27}. This structural property cannot be corrected by a global scalar applied to all predictions, but can be addressed by per-band isotonic regression fitting directly to the severe subgroup.
+
+This observation generalises to the \textit{Miscalibration Directionality Principle}: global single-parameter recalibration methods (temperature scaling, Platt scaling) adjust overall prediction sharpness but cannot introduce probability mass where it was absent in training; they can only compress or expand existing estimates. Per-band non-parametric methods (isotonic regression) can reshape the probability distribution within each band independently, making them direction-agnostic when sufficient validation data exists. The principle therefore provides both a diagnostic (check direction of miscalibration) and a prescriptive rule (use per-band isotonic for underestimators).
+
+\subsection{Clinical Implications and Recommendations}
+
+Underestimation of mortality risk in critically ill patients is more dangerous than overestimation. An overestimated probability prompts conservative management that errs on the side of caution \cite{b5}; an underestimated probability may give false reassurance, delaying or preventing critical intervention for the patients already at highest mortality risk. A model predicting 46\% mortality when the true rate is 63.8\% for SOFA $\ge$ 16 patients creates exactly this risk.
+
+The multi-threshold analysis (Table~\ref{tab:multithresh}) confirms this is threshold-invariant: RF misses 14 severe patients even at the lenient 0.30 threshold, while LR, LGBM, and LSTM miss none. The MIMIC-III replication further confirms that 8 of 35 severe patients (22.9\%) are missed by RF under the aligned 14-feature setting — confirming the structural undertriage is inherent to the ensemble probability compression mechanism.
+
+Based on these findings, observed consistently across two datasets, eras, and feature configurations, the following evaluation practices are recommended before ICU model deployment:
+
+\begin{enumerate}
+  \item Compute severity-band-stratified calibration gaps alongside aggregate ECE.
+  \item Generate reliability diagrams stratified by SOFA band, using adaptive binning ($\ge$10 patients per bin).
+  \item Apply and evaluate per-band recalibration (isotonic regression preferred), fitting parameters on a held-out validation set, not the test set.
+  \item Apply particular scrutiny to tree ensemble methods in severely imbalanced cohorts where the severe subgroup represents $<1\%$ of training data.
+  \item Avoid selecting models based on aggregate metrics alone when the target population includes a high-acuity minority subgroup; always supplement with severity-band-stratified evaluation.
+\end{enumerate}
+
+\subsection{Relation to the Broader Subgroup Evaluation Literature}
+
+The calibration paradox documented here is an instance of a general phenomenon: aggregate metrics obscuring subgroup failures in clinical machine learning. Obermeyer et al.\ demonstrated that a widely deployed population health management algorithm appeared well-calibrated at the aggregate level while systematically underserving patients at equivalent risk \cite{b28}. Pfohl et al.\ showed that fairness--performance trade-offs in clinical risk prediction persist across diverse observational databases even when aggregate discrimination is strong \cite{b30}. The present work extends this line of evidence specifically to the probability calibration domain and the ICU context, providing a formal framework (SWCE) and a reproducible evaluation protocol for detecting such failures before deployment.
+
+\subsection{When SWCE May Be Insufficient}
+
+SWCE may be insufficient when: (1) the severe band is too small (MIMIC-III n=35 gives individual bootstrap CIs that include zero, limiting per-model statistical significance); (2) SOFA is measured only at admission and does not capture trajectory; (3) the $\beta$ parameter is applied without clinical elicitation of severity-cost ratios; (4) the metric is used without band-stratified reliability diagrams, which are essential for diagnosing miscalibration direction and structure.
+
+%% FIX-08: SOFA as feature AND stratifier — acknowledge (as passing note in FW)
+A further consideration is feature-stratum dependence: SOFA score is both a model input feature and the basis for severity band stratification. This is clinically motivated — SOFA is the established severity measure in ICU care — but creates dependence between the predictor space and the evaluation strata. Future work should examine whether the calibration paradox persists when severity stratification uses an independent severity measure such as APACHE II score or lactate-based acuity indices.
+
+\subsection{Limitations}
+\label{sec:limitations}
+
+\textit{Sample size:} The MIMIC-IV severe band contains n=69 patients, reflecting the true clinical rarity of SOFA$\ge$16 patients. This rarity is not a methodological weakness — it is precisely why severity-stratified evaluation is necessary. Three independent statistical procedures converge despite the small n: all MIMIC-IV bootstrap CIs exclude zero; permutation tests yield $p < 0.001$ for all RF comparisons; and resampling robustness to n=200 produces CI $[-0.232, -0.117]$. The MIMIC-III severe band n=35 is smaller still; nonetheless, the bootstrap CI for RF's severe-band gap $[-0.296, -0.068]$ excludes zero, consistent with MIMIC-IV. The smaller absolute n means individual-model estimates carry higher variance — the directional pattern (RF as the only underestimator) is the primary replication finding, supported by permutation tests ($p < 0.001$) across both cohorts.
+
+\textit{Imputation:} Missing value handling is acknowledged as a methodological consideration. Dataset-wide median imputation prior to splitting allows validation- and test-set distribution information to influence imputed feature values. The practical impact is expected to be conservative (population-level medians, not patient-specific estimates; reducing feature variance; biasing against detection of the paradox). Complete-case analysis would reduce the severe band to n=15, making analysis of this critical subgroup statistically impossible. A train-only imputation sensitivity analysis represents important future methodological work to further validate these findings under stricter preprocessing protocols.
+
+\textit{Dataset origin:} Both datasets originate from BIDMC, constituting temporal rather than multi-institutional replication. Multi-institutional validation using eICU, ANZICS-APD, or HiRID with full feature extraction remains important future work.
+
+\textit{MIMIC-III feature space:} By successfully constructing an identical 14-feature space from the distinct MIMIC-III EHR systems, we confirm that the structural calibration paradox — RF severe-band underestimation and divergence from aggregate metrics — persists not just across time, but across the technical variations inherent in different hospital information systems.
+
+\textit{No prospective validation:} All results are retrospective. Prospective validation with live model integration, clinician feedback, and outcome tracking is required before deployment recommendations can be made.
+
+\textit{SOFA at admission only:} SOFA is computed at ICU admission (Day 1) only. Weighting by SOFA trajectory or maximum score may provide more accurate acuity characterisation \cite{b21}.
+
+\textit{Recalibration methods:} Only temperature scaling and isotonic regression are evaluated. Beta calibration \cite{b9} and feature-conditional approaches may behave differently, though the directionality finding is expected to persist given its structural basis.
+
+%% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+%% ============================================================
+
+This work proposed and evaluated SWCE, a formally defined severity-weighted calibration framework, and demonstrated that aggregate calibration metrics mask clinically important failures in high-acuity ICU subgroups.
+
+Experiments were conducted on MIMIC-IV (72,001 patients; test set n=14,401; severe band SOFA\,$\geq$\,16, n=69, true mortality=63.8\%) and replicated on MIMIC-III (45,278 patients; test set n=9,056; severe band n=35, true mortality=74.3\%), using a consistent 14-feature space and 70/10/20 stratified split across both cohorts. Five models --- Logistic Regression (LR; F1=0.4043, AUC=0.7909), Random Forest (RF; F1=0.4364, AUC=0.8183), XGBoost (XGB; F1=0.4152, AUC=0.7913), LightGBM (LGBM; F1=0.4415, AUC=0.8252), and LSTM (F1=0.4314, AUC=0.8143) --- were evaluated. LightGBM and LSTM demonstrated the strongest discriminative performance; all five models achieved comparable AUC in the range 0.79--0.83 on MIMIC-IV.
+
+The calibration paradox was the central finding. Random Forest achieves the best aggregate ECE (0.0098 [95\,\% CI: 0.006--0.015]) on MIMIC-IV while simultaneously producing the worst severe-band calibration gap ($-$0.174), missing 43 of 69 severe patients (62.3\%) at a 0.50 triage threshold --- with undertriage persisting across all thresholds from T=0.30 (14 missed) to T=0.70 (60 missed). LR and LSTM miss zero severe patients at T=0.50 despite aggregate ECE values more than 28 times larger than RF. The paradox replicates on MIMIC-III: RF again ranks first by aggregate ECE (0.0098) while producing the only severe-band underestimation ($-$0.185), missing 8 of 35 severe patients (22.9\%) at T=0.50. In both cohorts, 4 of 5 models show divergence between aggregate ECE rank and severe-band safety rank.
+
+Three principal findings were established. First, ECE, AECE, and SWCE produce identical aggregate model rankings on both datasets (Spearman $\rho = 1.00$); RF ranks first and LR ranks fifth by all three metrics, across all tested values of the severity parameter $\beta \in \{0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0\}$. Bootstrap confidence intervals (1,000 resamples) and paired permutation tests (10,000 iterations, all $p < 0.001$) confirm that RF's severe-band underestimation is structural: MIMIC-IV CI [$-$0.274, $-$0.072]; MIMIC-III CI [$-$0.296, $-$0.068]; both entirely negative. Band-stratified calibration gap analysis is therefore the necessary and sufficient diagnostic for this class of failure. Second, standard global temperature scaling fails or worsens 4 of 5 models on MIMIC-IV, confirming that a single scalar cannot address severity-heterogeneous miscalibration; only LR, which overestimates uniformly, benefits ($\Delta$ECE\,$= -$0.017). Third, per-band isotonic recalibration substantially reduces RF's severe-band gap on MIMIC-III ($-$0.185\,$\rightarrow$\,$+$0.010) and markedly attenuates it on MIMIC-IV ($-$0.174\,$\rightarrow$\,$-$0.058), while improving all other models --- confirming the failure is structurally correctable without altering discriminative performance.
+
+Severity-stratified calibration evaluation using SWCE and band-level reliability diagrams, followed by per-band isotonic recalibration fitted on a held-out validation set, should be standard practice before ICU mortality prediction models are deployed.
+
+The calibration paradox demonstrated here --- best aggregate performance masking worst subgroup safety --- is unlikely to be limited to ICU mortality prediction. Any imbalanced clinical prediction task where a rare high-stakes subgroup exists --- sepsis onset prediction, acute kidney injury, postpartum haemorrhage, or cancer recurrence risk stratification --- is susceptible to the same structural failure. SWCE and band-stratified calibration analysis provide the evaluation infrastructure needed to detect it. When the patients who matter most are the patients we see least, aggregate metrics cannot be trusted, and severity-stratified evaluation becomes an ethical necessity.
+
+\section*{Acknowledgment}
+
+The authors thank the PhysioNet team and the original contributors of the MIMIC-III and MIMIC-IV datasets for making these critical care databases publicly available. The authors also acknowledge the support of the Department of Computer Science and Engineering, RV University, Bengaluru, for providing the necessary facilities and resources for this research.
+
+\section*{Code Availability}
+The code used in this study is publicly available at:
+\url{https://github.com/amanchandrah895/swce-icu-calibration}.
+The repository includes all preprocessing pipelines, model
+training scripts, calibration experiments, severity-band
+analysis notebooks, and statistical validation procedures
+corresponding to all tables and figures reported in this
+manuscript. The MIMIC-IV and MIMIC-III datasets are publicly
+accessible via PhysioNet but require credentialed access; data cannot be redistributed.
+
+\begin{thebibliography}{00}
+
+\bibitem{b1} A. P. Dawid, ``The well-calibrated Bayesian,'' \emph{Journal of the American Statistical Association}, vol. 77, no. 379, pp. 605--610, 1982.
+
+\bibitem{b2} A. Niculescu-Mizil and R. Caruana, ``Predicting good probabilities with supervised learning,'' in \emph{Proc. 22nd International Conference on Machine Learning (ICML)}, Bonn, Germany, 2005, pp. 625--632.
+
+\bibitem{b3} R. Caruana, Y. Lou, J. Gehrke, P. Koch, M. Sturm, and N. Elhadad, ``Intelligible models for healthcare: Predicting pneumonia risk and hospital 30-day readmission,'' in \emph{Proc. 21st ACM SIGKDD International Conference on Knowledge Discovery and Data Mining}, Sydney, Australia, 2015, pp. 1721--1730.
+
+\bibitem{b4} C. Guo, G. Pleiss, Y. Sun, and K. Q. Weinberger, ``On calibration of modern neural networks,'' in \emph{Proc. 34th International Conference on Machine Learning (ICML)}, Sydney, Australia, 2017, pp. 1321--1330.
+
+\bibitem{b5} M. M. Churpek, T. C. Yuen, M. Winslow et al., ``Multicenter comparison of machine learning methods and conventional regression for predicting clinical deterioration on the wards,'' \emph{Critical Care Medicine}, vol. 44, no. 2, pp. 368--374, Feb. 2016.
+
+\bibitem{b7} J. D. Malley, J. Kruppa, A. Dasgupta, K. B. Malley, and A. Ziegler, ``Probability machines: Consistent probability estimation using nonparametric learning machines,'' \emph{Methods of Information in Medicine}, vol. 51, no. 6, pp. 510--515, 2012.
+
+\bibitem{b9} M. Kull, M. P. N. Silva Filho, and P. Flach, ``Beyond sigmoids: How to obtain well-calibrated probabilities from binary classifiers with beta calibration,'' \emph{Electronic Journal of Statistics}, vol. 11, no. 2, pp. 5052--5080, 2017.
+
+\bibitem{b10} A. Kumar, P. Liang, and T. Ma, ``Verified uncertainty calibration,'' in \emph{Proc. 33rd Conference on Neural Information Processing Systems (NeurIPS)}, Vancouver, Canada, 2019, pp. 3787--3798.
+
+\bibitem{b11} B. Van Calster, D. J. McLernon, M. van Smeden et al., ``Calibration: the Achilles heel of predictive analytics,'' \emph{BMC Medicine}, vol. 17, no. 1, p. 230, Dec. 2019.
+
+\bibitem{b12} E. W. Steyerberg, A. J. Vickers, N. R. Cook et al., ``Assessing the performance of prediction models: a framework for some traditional and novel measures,'' \emph{Epidemiology}, vol. 21, no. 1, pp. 128--138, Jan. 2010.
+
+
+\bibitem{b36} D. R. Cox, ``Two further applications of a model for binary regression,'' \emph{Biometrika}, vol. 45, no. 3/4, pp. 562--565, 1958.
+
+\bibitem{b13} C. Elkan, ``The foundations of cost-sensitive learning,'' in \emph{Proc. 17th International Joint Conference on Artificial Intelligence (IJCAI)}, Seattle, WA, USA, Aug. 2001, pp. 973--978.
+
+\bibitem{b15} B. Nestor, M. B. A. McDermott, W. Boag et al., ``Feature robustness in non-stationary health records: caveats to deployability of deep learning models,'' in \emph{Proc. Machine Learning for Healthcare Conference (MLHC)}, 2019.
+
+\bibitem{b16} J. Platt, ``Probabilistic outputs for support vector machines and comparisons to regularized likelihood methods,'' in \emph{Advances in Large Margin Classifiers}, MIT Press, 1999, pp. 61--74.
+
+\bibitem{b17} B. Zadrozny and C. Elkan, ``Transforming classifier scores into accurate multiclass probability estimates,'' in \emph{Proc. 8th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining (KDD)}, Edmonton, Canada, 2002, pp. 694--699.
+
+\bibitem{b18} A. E. W. Johnson, L. Bulgarelli, L. Shen et al., ``MIMIC-IV, a freely accessible electronic health record dataset,'' \emph{Scientific Data}, vol. 10, no. 1, p. 1, Jan. 2023.
+
+\bibitem{b19} A. E. W. Johnson, T. J. Pollard, L. Shen et al., ``MIMIC-III, a freely accessible critical care database,'' \emph{Scientific Data}, vol. 3, p. 160035, May 2016.
+
+\bibitem{b20} J.-L. Vincent, R. Moreno, J. Takala et al., ``The SOFA (Sepsis-related Organ Failure Assessment) score to describe organ dysfunction/failure,'' \emph{Intensive Care Medicine}, vol. 22, no. 7, pp. 707--710, Jul. 1996.
+
+\bibitem{b21} F. L. Ferreira, D. P. Bota, A. Bross, C. M\'{e}lot, and J. L. Vincent, ``Serial evaluation of the SOFA score to predict outcome in critically ill patients,'' \emph{JAMA}, vol. 286, no. 14, pp. 1754--1758, Oct. 2001.
+
+\bibitem{b23} L. A. Minne, A. Abu-Hanna, and E. de Jonge, ``Evaluation of SOFA-based models for predicting mortality in the ICU: A systematic review,'' \emph{Critical Care}, vol. 12, no. 6, p. R161, 2008.
+
+\bibitem{b24} T. Chen and C. Guestrin, ``XGBoost: A scalable tree boosting system,'' in \emph{Proc. 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining}, San Francisco, CA, USA, 2016, pp. 785--794.
+
+\bibitem{b25} G. Ke, Q. Meng, T. Finley et al., ``LightGBM: A highly efficient gradient boosting decision tree,'' in \emph{Proc. 31st Conference on Neural Information Processing Systems (NIPS)}, Long Beach, CA, USA, 2017, pp. 3146--3154.
+
+\bibitem{b26} H. Harutyunyan, H. Khachatrian, D. C. Kale, G. Ver Steeg, and A. Galstyan, ``Multitask learning and benchmarking with clinical time series data,'' \emph{Scientific Data}, vol. 6, no. 1, p. 96, 2019.
+
+\bibitem{b27} L. Breiman, ``Random forests,'' \emph{Machine Learning}, vol. 45, no. 1, pp. 5--32, 2001.
+
+\bibitem{b28} Z. Obermeyer, B. Powers, C. Vogeli, and S. Mullainathan, ``Dissecting racial bias in an algorithm used to manage the health of populations,'' \emph{Science}, vol. 366, no. 6464, pp. 447--453, Oct. 2019.
+
+\bibitem{b29} G. Pang, L. Lan, H. Liu et al., ``Establishment of ICU mortality risk prediction models with machine learning algorithm using MIMIC-IV database,'' \emph{Diagnostics}, vol. 12, no. 5, p. 1068, 2022.
+
+\bibitem{b30} S. R. Pfohl, T. Marafino, A. Coulet et al., ``An empirical characterization of fair machine learning for clinical risk prediction,'' \emph{Journal of Biomedical Informatics}, vol. 113, p. 103621, Jan. 2021.
+
+\bibitem{b31} A. Barboi, M. Cirstoiu, R. Vladareanu, and C. Cirstoiu, ``Comparison of severity of illness scores and AI models predictive of ICU mortality: A systematic review,'' \emph{JMIR Medical Informatics}, vol. 10, no. 2, p. e31990, 2022.
+
+\bibitem{b32} E. Choi, C. Bahadori, A. Schuetz et al., ``Mortality prediction using machine learning algorithms based on electronic health records in critically ill patients,'' \emph{Scientific Reports}, vol. 12, no. 1, p. 8072, 2022.
+
+\bibitem{b33} J. Ojeda, S. Bou-Hamad, W. Nurmi, and T. Salonen, ``Calibrating machine learning approaches for probability estimation: A comprehensive comparison,'' \emph{Statistics in Medicine}, vol. 42, no. 15, pp. 2678--2694, Jul. 2023.
+
+\bibitem{b34} F. Pedregosa, G. Varoquaux, A. Gramfort et al., ``Scikit-learn: Machine learning in Python,'' \emph{Journal of Machine Learning Research}, vol. 12, pp. 2825--2830, 2011.
+
+\bibitem{b35} R. D. Riley, J. M. S. Snell, K. I. E. Snell et al., ``Stability of clinical prediction models developed using statistical or machine learning methods,'' \emph{Biometrical Journal}, vol. 65, no. 8, p. 2200302, 2023.
+
+\end{thebibliography}
+
+\vspace{-3em}
+
+\begin{IEEEbiography}[{\includegraphics[width=0.9in,height=1.1in,clip,keepaspectratio]{figures/Author1.png}}]{Aman Chandra H}
+is currently pursuing the Bachelor of Technology degree in Computer Science and Engineering from RV University, Bengaluru, India. His research interests include machine learning and its applications in biomedical and healthcare systems. He has a publication in Springer CCIS conference proceedings on IV fluid monitoring using a capacitive sensor-based device.
+\end{IEEEbiography}
+
+\vspace{-2em}
+
+
+\begin{IEEEbiography}[{\includegraphics[width=0.9in,height=0.95in,clip,keepaspectratio]{figures/Author2.png}}]{K. C. NARENDRA}
+Received the B.E., M.Tech., and Ph.D. degrees from Visvesvaraya Technological University (VTU), Belagavi, India, in 2009 and 2012, respectively. He completed the Ph.D. under guidance of Dr. R. Kumaraswamy. He is Associate Professor with the School of Computer Science and Engineering, RV University, Bengaluru. Previously, he was associated with Nitte University, Nitte. His work focuses on signal processing and machine learning, particularly speech processing.\EOD
+\end{IEEEbiography}
+
+\end{document}

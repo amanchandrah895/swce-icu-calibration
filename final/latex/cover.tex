@@ -1,0 +1,50 @@
+\documentclass[11pt]{letter}
+\usepackage[a4paper, top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{parskip}
+\usepackage{hyperref}
+
+\hypersetup{colorlinks=true, urlcolor=blue, linkcolor=blue}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.8em}
+
+\begin{document}
+
+\noindent
+Aman Chandra H \& K.~C.~Narendra\\
+School of Computer Science and Engineering\\
+RV University, Bengaluru 560059, India\\
+\href{mailto:amanch.btech23@rvu.edu.in}{amanch.btech23@rvu.edu.in}\\[1.5em]
+
+\noindent \today\\[1.5em]
+
+\noindent
+Editor-in-Chief\\
+\textit{IEEE Access}\\[1.5em]
+
+\noindent Dear Editor-in-Chief,\\[0.8em]
+
+We submit our manuscript, \textbf{``Severity-Weighted Calibration Error for Reliability Assessment Under Outcome-Severity Imbalance,''} for consideration as an Article in \textit{IEEE Access}.
+
+\textbf{Problem.} Standard calibration metrics (e.g., ECE) are blind to subgroup failures. When high-risk cases are rare, models appear well-calibrated in aggregate while systematically underestimating risk for the most critical subgroups---precisely where miscalibration matters most.
+
+\textbf{Contribution.} We propose \textbf{Severity-Weighted Calibration Error (SWCE)}, a post-hoc metric that incorporates outcome-severity weighting without model retraining. We demonstrate that aggregate metrics collapse to identical rankings when severe cases are rare ($<1\%$), proving that stratified evaluation is mathematically necessary, not merely preferable. We further provide a severity-stratified diagnostic framework and practical recalibration guidance.
+
+\textbf{Suitability for IEEE Access.} The work addresses a fundamental limitation in probabilistic ML evaluation with broad applicability to any imbalanced prediction task---clinical, financial, or safety-critical---where rare high-stakes subgroups exist. All code is available at //
+\href{https://github.com/amanchandrah895/swce-icu-calibration}{github.com/amanchandrah895/swce-icu-calibration}.
+
+This manuscript is original, unpublished elsewhere, and approved by all authors. No conflicts of interest exist.
+
+Thank you for your consideration.\\[1.5em]
+
+\noindent Sincerely,\\[1em]
+
+\noindent
+Aman Chandra H\\
+Corresponding Author\\[0.8em]
+
+\noindent
+K.~C.~Narendra
+
+\end{document}
